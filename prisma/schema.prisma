@@ -1,0 +1,129 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id    Int     @id @default(autoincrement())
+  email String  @unique
+  name  String?
+  phone String?
+  birthDate DateTime?
+  portfolios Portfolio[]
+}
+
+model Portfolio {
+  id            String              @id @default(uuid())
+  user          User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId        Int
+  name          String
+  baseCurrency  String              @db.Char(3)
+  totalValue    Decimal             @default(0)
+  cashValue     Decimal             @default(0)
+  investedValue Decimal             @default(0)
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  positions     PortfolioPosition[]
+  cashMovements CashMovement[]
+  orders        Order[]
+  snapshots     PortfolioSnapshot[]
+}
+
+model Stock {
+  id        String               @id @default(uuid())
+  symbol    String               @unique
+  name      String
+  exchange  String
+  currency  String               @db.Char(3)
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
+
+  positions PortfolioPosition[]
+  orders    Order[]
+}
+
+model PortfolioPosition {
+  id          String   @id @default(uuid())
+  portfolio   Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  portfolioId String
+  stock       Stock     @relation(fields: [stockId], references: [id])
+  stockId     String
+  currency    String
+  quantity    Decimal   @default(0)
+  avgPrice    Decimal   @default(0)
+  lastPrice   Decimal?
+  updatedAt   DateTime  @default(now()) @updatedAt
+
+  @@unique([portfolioId, stockId])
+}
+
+enum CashMovementType {
+  DEPOSIT
+  WITHDRAWAL
+  ORDER_SETTLEMENT
+  ADJUSTMENT
+}
+
+model CashMovement {
+  id          String            @id @default(uuid())
+  portfolio   Portfolio         @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  portfolioId String
+  type        CashMovementType
+  amount      Decimal
+  currency    String            @db.Char(3)
+  happenedAt  DateTime
+  note        String?
+  createdAt   DateTime          @default(now())
+}
+
+enum OrderSide {
+  BUY
+  SELL
+}
+
+enum OrderStatus {
+  PENDING
+  FILLED
+  CANCELED
+}
+
+model Order {
+  id          String      @id @default(uuid())
+  portfolio   Portfolio   @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  portfolioId String
+  stock       Stock       @relation(fields: [stockId], references: [id])
+  stockId     String
+  side        OrderSide
+  quantity    Decimal
+  price       Decimal
+  currency    String
+  status      OrderStatus @default(PENDING)
+  placedAt    DateTime
+  filledAt    DateTime?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+}
+
+model PortfolioSnapshot {
+  id            String     @id @default(uuid())
+  portfolio     Portfolio  @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  portfolioId   String
+  asOf          DateTime
+  totalValue    Decimal
+  cashValue     Decimal
+  investedValue Decimal
+  createdAt     DateTime   @default(now())
+
+  @@unique([portfolioId, asOf])
+}
