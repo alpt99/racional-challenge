@@ -10,7 +10,7 @@ export const cashMovementTypes = [
 export const recordCashMovementSchema = z.object({
   portfolioId: z.string().uuid(),
   type: z.enum(cashMovementTypes),
-  amount: z.number(),
+  amount: z.number().positive("Amount must be greater than 0"),
   currency: z
     .string()
     .trim()

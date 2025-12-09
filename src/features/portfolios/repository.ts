@@ -3,6 +3,23 @@ import { prisma } from "@/lib/prisma";
 const prismaAny = prisma as any;
 
 export const portfolioRepository = {
+  findLatestCashMovements: (id: string, limit: number = 10) =>
+    prismaAny.cashMovement.findMany({
+      where: { portfolioId: id },
+      orderBy: { happenedAt: "desc" },
+      take: limit,
+    }),
+  findLatestOrders: (id: string, limit: number = 10) =>
+    prismaAny.order.findMany({
+      where: { portfolioId: id },
+      orderBy: { placedAt: "desc" },
+      take: limit,
+    }),
+  findPortfolioSnapshotsHistory: (id: string) =>
+    prismaAny.portfolioSnapshot.findMany({
+      where: { portfolioId: id },
+      orderBy: { createdAt: "desc" },
+    }),
   findById: (id: string) =>
     prismaAny.portfolio.findUnique({
       where: { id },
@@ -10,7 +27,6 @@ export const portfolioRepository = {
         positions: true,
         cashMovements: true,
         orders: true,
-        snapshots: true,
       },
     }),
   findByUser: (userId: number) =>
