@@ -1,43 +1,19 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { portfolioApplication } from "@/features/portfolios/application";
+import { userApplication } from "@/features/users/application";
 import { DomainError } from "@/lib/errors";
 
 export async function PATCH(
   request: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: { id: number } }
 ) {
   try {
     const json = await request.json();
     const body = {
       ...json,
-      id: (await params).id,
+      id: Number((await params).id),
     };
-    const response = await portfolioApplication.updatePortfolioInfo(body);
-
-    return NextResponse.json({ data: response }, { status: 200 });
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { error: "Invalid request body", details: error.flatten() },
-        { status: 400 }
-      );
-    }
-
-    return NextResponse.json(
-      { error: "Unexpected server error" },
-      { status: 500 }
-    );
-  }
-}
-
-export async function GET(
-  request: Request,
-  { params }: { params: { id: string } }
-) {
-  try {
-    const id = (await params).id;
-    const response = await portfolioApplication.findById(id);
+    const response = await userApplication.updateUser(body);
     return NextResponse.json({ data: response }, { status: 200 });
   } catch (error) {
     if (error instanceof DomainError) {

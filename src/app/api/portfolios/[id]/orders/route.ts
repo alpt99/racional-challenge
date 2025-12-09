@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { portfolioApplication } from "@/features/portfolios/application";
 import { DomainError } from "@/lib/errors";
+import { orderApplication } from "@/features/orders/application";
 
-export async function PATCH(
+export async function POST(
   request: Request,
   { params }: { params: { id: string } }
 ) {
@@ -11,10 +11,10 @@ export async function PATCH(
     const json = await request.json();
     const body = {
       ...json,
-      id: (await params).id,
+      portfolioId: (await params).id,
+      placedAt: new Date(),
     };
-    const response = await portfolioApplication.updatePortfolioInfo(body);
-
+    const response = await orderApplication.placeOrder(body);
     return NextResponse.json({ data: response }, { status: 200 });
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -23,33 +23,10 @@ export async function PATCH(
         { status: 400 }
       );
     }
-
-    return NextResponse.json(
-      { error: "Unexpected server error" },
-      { status: 500 }
-    );
-  }
-}
-
-export async function GET(
-  request: Request,
-  { params }: { params: { id: string } }
-) {
-  try {
-    const id = (await params).id;
-    const response = await portfolioApplication.findById(id);
-    return NextResponse.json({ data: response }, { status: 200 });
-  } catch (error) {
     if (error instanceof DomainError) {
       return NextResponse.json(
         { error: error.code ?? error.message },
         { status: error.status }
-      );
-    }
-    if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { error: "Invalid request body", details: error.flatten() },
-        { status: 400 }
       );
     }
     return NextResponse.json(
