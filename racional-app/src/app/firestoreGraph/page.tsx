@@ -22,6 +22,7 @@ import {
 } from "recharts";
 import { Timestamp } from "firebase/firestore";
 import { InvestmentEvolution, subscribeToDocument } from "./firestoreService";
+import { ChartCard } from "./chartCardComponent";
 
 type RangeKey = "1W" | "1M" | "3M" | "1Y" | "YTD" | "MAX";
 type WithDate = InvestmentEvolution & { date: Date; id?: string };
@@ -756,7 +757,7 @@ export default function FirestoreGraph() {
             </ResponsiveContainer>
           </ChartCard>
 
-          {/* Sección de retornos: serie + histograma + beta */}
+          {/* Sección de retornos: serie + beta */}
           <ChartCard title="Retornos historicos">
             {!hasData ? (
               <p style={{ margin: 0, color: "#475569" }}>Sin datos.</p>
@@ -898,27 +899,5 @@ export default function FirestoreGraph() {
         </div>
       </ChartCard>
     </div>
-  );
-}
-
-function ChartCard({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section
-      style={{
-        border: "1px solid #e2e8f0",
-        borderRadius: "14px",
-        padding: "16px",
-        background: "#fff",
-      }}
-    >
-      <h3 style={{ margin: "0 0 12px", fontSize: "16px" }}>{title}</h3>
-      {children}
-    </section>
   );
 }

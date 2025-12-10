@@ -1,36 +1,27 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
-
 ## Getting Started
 
-First, run the development server:
+#Como usar
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+Correr la aplicacion haciendo npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Hay un .env de ejemplo
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Abrir [http://localhost:3000](http://localhost:3000)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+En esta pagina al apretar el boton lo redirigirá al dashboard conectado a firestore
 
-## Learn More
+## Flujo IA
 
-To learn more about Next.js, take a look at the following resources:
+Utilice cursor en el desarrollo para las siguientes acciones:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- Resumen de documentacion de firebase para ver como conectarse, después validar
+  con busqueda en google en la documentación oficial y otros recursos
+- Apoyo en la investigación de que gráficos podían ser útiles para mostrar, estandares de industria financiera
+- Resumen de documentacion de recharts (https://recharts.github.io/en-US/examples/TargetPriceChart/)
+- Apoyo general en autocompletado de codigo de codigo
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+# Tareas Para el Futuro
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Queda pendiente ordenar más el codigo, debido a que por razones personales no tuve tanto tiempo, priorice el resultado final, cuando creo que se puede organizar mucho mejor el código
