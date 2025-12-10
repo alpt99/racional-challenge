@@ -7,6 +7,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  ComposedChart,
   Legend,
   Line,
   LineChart,
@@ -152,59 +153,22 @@ function computeDrawdown(
   });
 }
 
-function aggregateContributions(data: WithDate[]) {
-  const byDay = new Map<string, number>();
-  for (const d of data) {
-    const key = d.date.toISOString().slice(0, 10);
-    byDay.set(key, (byDay.get(key) ?? 0) + (d.contributions ?? 0));
-  }
-  return Array.from(byDay.entries())
-    .map(([date, contributions]) => ({ date: new Date(date), contributions }))
-    .sort((a, b) => a.date.getTime() - b.date.getTime());
-}
+function computeMaximumDrawdown(
+  drawdown: { date: Date; drawdownPct: number }[]
+): { mdd: number; date: Date } | null {
+  if (!drawdown || drawdown.length === 0) return null;
 
-type HeatmapCell = {
-  key: string;
-  day: number;
-  monthLabel: string;
-  value: number;
-};
+  let mdd = 0;
+  let mddDate = drawdown[0].date;
 
-function buildHeatmap(data: WithDate[]): HeatmapCell[] {
-  // Agrupa retornos diarios por mes para dibujar un heatmap simple (día vs mes).
-  const byMonth = new Map<
-    string,
-    { monthLabel: string; values: Map<number, number> }
-  >();
-  for (const d of data) {
-    const monthKey = `${d.date.getFullYear()}-${String(
-      d.date.getMonth() + 1
-    ).padStart(2, "0")}`;
-    const monthLabel = d.date.toLocaleDateString("en-GB", {
-      month: "short",
-      year: "2-digit",
-    });
-    if (!byMonth.has(monthKey))
-      byMonth.set(monthKey, { monthLabel, values: new Map() });
-    byMonth.get(monthKey)!.values.set(d.date.getDate(), d.dailyReturn ?? 0);
-  }
-
-  const cells: HeatmapCell[] = [];
-  const sortedMonths = Array.from(byMonth.entries()).sort(([a], [b]) =>
-    a > b ? 1 : -1
-  );
-  for (const [, { monthLabel, values }] of sortedMonths) {
-    for (let day = 1; day <= 31; day++) {
-      if (!values.has(day)) continue;
-      cells.push({
-        key: `${monthLabel}-${day}`,
-        day,
-        monthLabel,
-        value: values.get(day) ?? 0,
-      });
+  drawdown.forEach((d) => {
+    if (d.drawdownPct < mdd) {
+      mdd = d.drawdownPct;
+      mddDate = d.date;
     }
-  }
-  return cells;
+  });
+
+  return { mdd, date: mddDate };
 }
 
 type HistogramBin = {
@@ -330,6 +294,229 @@ function colorForReturn(value: number, mean: number, stdev: number) {
   return `rgb(${r}, ${g}, ${b})`;
 }
 
+function normalizePortfolioValueForComparisson(data: WithDate[]) {
+  if (!data || data.length === 0) return data;
+
+  let normalizedValue = 100;
+  const newData = data.map((d, index) => {
+    if (index === 0) {
+      return {
+        ...d,
+        portfolioValueNormalized: normalizedValue,
+      };
+    }
+    // Calculate compound return: value = previousValue * (1 + dailyReturn)
+    const dailyReturn = d.dailyReturn ?? 0;
+    normalizedValue = normalizedValue * (1 + dailyReturn);
+    return {
+      ...d,
+      portfolioValueNormalized: normalizedValue,
+    };
+  });
+  return newData;
+}
+
+function computeSharpeRatio(data: WithDate[]): number {
+  if (!data || data.length === 0) return 0;
+
+  const returns = data
+    .map((d) => d.dailyReturn ?? 0)
+    .filter((r) => !Number.isNaN(r));
+
+  if (returns.length === 0) return 0;
+
+  const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
+  const variance =
+    returns.reduce((acc, r) => acc + Math.pow(r - mean, 2), 0) / returns.length;
+  const stdev = Math.sqrt(variance);
+
+  // If standard deviation is zero, return 0 (no risk, undefined Sharpe)
+  if (stdev === 0) return 0;
+
+  // Annualize: multiply by sqrt(252) trading days per year
+  // dailyReturn is already in decimal format (e.g., 0.05 for 5%)
+  const sharpe = (mean / stdev) * Math.sqrt(252);
+
+  return sharpe;
+}
+
+function computeIndexSharpeRatio(data: WithDate[]): number {
+  if (!data || data.length < 2) return 0;
+
+  // Calculate daily returns from portfolio index
+  const returns: number[] = [];
+  let prevIndex = data[0].portfolioIndex || 0;
+
+  for (let i = 1; i < data.length; i++) {
+    const currIndex = data[i].portfolioIndex || 0;
+    if (prevIndex > 0) {
+      // Calculate return as decimal (e.g., 0.05 for 5%)
+      const dailyReturn = (currIndex - prevIndex) / prevIndex;
+      if (!Number.isNaN(dailyReturn)) {
+        returns.push(dailyReturn);
+      }
+    }
+    prevIndex = currIndex || prevIndex;
+  }
+
+  if (returns.length === 0) return 0;
+
+  const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
+  const variance =
+    returns.reduce((acc, r) => acc + Math.pow(r - mean, 2), 0) / returns.length;
+  const stdev = Math.sqrt(variance);
+
+  // If standard deviation is zero, return 0 (no risk, undefined Sharpe)
+  if (stdev === 0) return 0;
+
+  // Annualize: multiply by sqrt(252) trading days per year
+  const sharpe = (mean / stdev) * Math.sqrt(252);
+
+  return sharpe;
+}
+
+function percentile(sortedArray: number[], p: number): number {
+  if (sortedArray.length === 0) return 0;
+  const index = (sortedArray.length - 1) * p;
+  const lower = Math.floor(index);
+  const upper = Math.ceil(index);
+  const weight = index - lower;
+  return sortedArray[lower] * (1 - weight) + sortedArray[upper] * weight;
+}
+
+type BoxplotStats = {
+  min: number;
+  q1: number;
+  median: number;
+  q3: number;
+  max: number;
+};
+
+function computeBoxplotStats(data: WithDate[]): {
+  portfolio: BoxplotStats;
+  index: BoxplotStats;
+} {
+  // Portfolio returns (already in decimal format)
+  const portfolioReturns = data
+    .map((d) => d.dailyReturn ?? 0)
+    .filter((r) => !Number.isNaN(r))
+    .sort((a, b) => a - b);
+
+  // Index returns (calculate from portfolioIndex)
+  const indexReturns: number[] = [];
+  let prevIndex = data[0]?.portfolioIndex || 0;
+  for (let i = 1; i < data.length; i++) {
+    const currIndex = data[i].portfolioIndex || 0;
+    if (prevIndex > 0) {
+      const dailyReturn = (currIndex - prevIndex) / prevIndex;
+      if (!Number.isNaN(dailyReturn)) {
+        indexReturns.push(dailyReturn);
+      }
+    }
+    prevIndex = currIndex || prevIndex;
+  }
+  indexReturns.sort((a, b) => a - b);
+
+  const computeStats = (returns: number[]): BoxplotStats => {
+    if (returns.length === 0) {
+      return { min: 0, q1: 0, median: 0, q3: 0, max: 0 };
+    }
+    return {
+      min: returns[0],
+      q1: percentile(returns, 0.25),
+      median: percentile(returns, 0.5),
+      q3: percentile(returns, 0.75),
+      max: returns[returns.length - 1],
+    };
+  };
+
+  return {
+    portfolio: computeStats(portfolioReturns),
+    index: computeStats(indexReturns),
+  };
+}
+
+type MonthlyBoxplotData = {
+  month: string;
+  date: Date;
+  portfolio: BoxplotStats;
+  index: BoxplotStats;
+};
+
+function computeMonthlyBoxplotStats(data: WithDate[]): MonthlyBoxplotData[] {
+  if (!data || data.length === 0) return [];
+
+  // Group data by month
+  const monthlyData = new Map<
+    string,
+    { portfolioReturns: number[]; indexReturns: number[]; date: Date }
+  >();
+
+  let prevIndex = data[0]?.portfolioIndex || 0;
+
+  data.forEach((d, i) => {
+    const monthKey = `${d.date.getFullYear()}-${String(
+      d.date.getMonth() + 1
+    ).padStart(2, "0")}`;
+
+    if (!monthlyData.has(monthKey)) {
+      monthlyData.set(monthKey, {
+        portfolioReturns: [],
+        indexReturns: [],
+        date: d.date,
+      });
+    }
+
+    const monthData = monthlyData.get(monthKey)!;
+
+    // Portfolio return
+    const portfolioReturn = d.dailyReturn ?? 0;
+    if (!Number.isNaN(portfolioReturn)) {
+      monthData.portfolioReturns.push(portfolioReturn);
+    }
+
+    // Index return
+    if (i > 0 && prevIndex > 0) {
+      const currIndex = d.portfolioIndex || 0;
+      const indexReturn = (currIndex - prevIndex) / prevIndex;
+      if (!Number.isNaN(indexReturn)) {
+        monthData.indexReturns.push(indexReturn);
+      }
+      prevIndex = currIndex;
+    } else if (i === 0) {
+      prevIndex = d.portfolioIndex || 0;
+    }
+  });
+
+  // Calculate stats for each month
+  const result: MonthlyBoxplotData[] = [];
+  monthlyData.forEach((monthData, monthKey) => {
+    const computeStats = (returns: number[]): BoxplotStats => {
+      if (returns.length === 0) {
+        return { min: 0, q1: 0, median: 0, q3: 0, max: 0 };
+      }
+      const sorted = [...returns].sort((a, b) => a - b);
+      return {
+        min: sorted[0],
+        q1: percentile(sorted, 0.25),
+        median: percentile(sorted, 0.5),
+        q3: percentile(sorted, 0.75),
+        max: sorted[sorted.length - 1],
+      };
+    };
+
+    result.push({
+      month: monthKey,
+      date: monthData.date,
+      portfolio: computeStats(monthData.portfolioReturns),
+      index: computeStats(monthData.indexReturns),
+    });
+  });
+
+  // Sort by date
+  return result.sort((a, b) => a.date.getTime() - b.date.getTime());
+}
+
 function formatDateLabel(d: Date) {
   return d.toISOString().slice(0, 10);
 }
@@ -371,10 +558,36 @@ export default function FirestoreGraph() {
   );
 
   const data = useMemo(() => filterByRange(parsed, range), [parsed, range]);
+  const dataNormalized = useMemo(
+    () => normalizePortfolioValueForComparisson(data),
+    [data]
+  );
   const dailyStats = useMemo(() => computeStats(data, "dailyReturn"), [data]);
+  const sharpeRatio = useMemo(() => computeSharpeRatio(data), [data]);
+  const indexSharpeRatio = useMemo(() => computeIndexSharpeRatio(data), [data]);
   const drawdown = useMemo(() => computeDrawdown(data), [data]);
-  const contributions = useMemo(() => aggregateContributions(data), [data]);
-  const heatmapCells = useMemo(() => buildHeatmap(data), [data]);
+  const mdd = useMemo(() => computeMaximumDrawdown(drawdown), [drawdown]);
+  const boxplotStats = useMemo(() => computeBoxplotStats(data), [data]);
+  const monthlyBoxplotStats = useMemo(
+    () => computeMonthlyBoxplotStats(data),
+    [data]
+  );
+  const monthlyBoxplotData = useMemo(() => {
+    return monthlyBoxplotStats.map((m) => ({
+      month: m.month,
+      date: m.date,
+      portfolioMin: m.portfolio.min * 100,
+      portfolioQ1: m.portfolio.q1 * 100,
+      portfolioMedian: m.portfolio.median * 100,
+      portfolioQ3: m.portfolio.q3 * 100,
+      portfolioMax: m.portfolio.max * 100,
+      indexMin: m.index.min * 100,
+      indexQ1: m.index.q1 * 100,
+      indexMedian: m.index.median * 100,
+      indexQ3: m.index.q3 * 100,
+      indexMax: m.index.max * 100,
+    }));
+  }, [monthlyBoxplotStats]);
   const histogramResult = useMemo(
     () =>
       computeHistogram(data, {
@@ -387,6 +600,44 @@ export default function FirestoreGraph() {
   const histogramDomain = histogramResult.domain;
   const returnPairs = useMemo(() => buildReturnPairs(data), [data]);
   const betaStats = useMemo(() => computeBetaStats(returnPairs), [returnPairs]);
+
+  // Summary metrics
+  const summaryMetrics = useMemo(() => {
+    if (!data || data.length === 0) {
+      return {
+        netReturn: 0,
+        currentPortfolioValue: 0,
+        totalContributions: 0,
+        gain: 0,
+        currentIndex: 0,
+      };
+    }
+
+    const initialValue = data[0]?.portfolioValue || 0;
+    const currentValue = data[data.length - 1]?.portfolioValue || 0;
+    const currentIndex = data[data.length - 1]?.portfolioIndex || 0;
+
+    // Use last value of contributions (already cumulative)
+    const totalContributions = data[data.length - 1]?.contributions || 0;
+    const initialContributions = data[0]?.contributions || 0;
+
+    // Calculate net return using normalized portfolio value (indexed return)
+    // portfolioValueNormalized starts at 100, so return = (finalNormalized / 100 - 1) * 100
+    const lastNormalized = dataNormalized[dataNormalized.length - 1] as any;
+    const finalNormalizedValue =
+      lastNormalized?.portfolioValueNormalized || 100;
+    const netReturn = (finalNormalizedValue / 100 - 1) * 100;
+
+    const gain = currentValue - totalContributions;
+
+    return {
+      netReturn,
+      currentPortfolioValue: currentValue,
+      totalContributions,
+      gain,
+      currentIndex,
+    };
+  }, [data, dataNormalized]);
 
   const hasData = data.length > 0;
   const hasRaw = !!raw;
@@ -456,6 +707,151 @@ export default function FirestoreGraph() {
         </div>
       </header>
 
+      {hasData && (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))",
+            gap: "16px",
+            marginBottom: "16px",
+          }}
+        >
+          {/* Retorno Neto */}
+          <div
+            style={{
+              border: "1px solid #e2e8f0",
+              borderRadius: "12px",
+              padding: "20px",
+              background: "#fff",
+            }}
+          >
+            <div
+              style={{
+                fontSize: "14px",
+                color: "#64748b",
+                marginBottom: "8px",
+              }}
+            >
+              Retorno Neto
+            </div>
+            <div
+              style={{
+                fontSize: "28px",
+                fontWeight: "bold",
+                color: summaryMetrics.netReturn >= 0 ? "#16a34a" : "#dc2626",
+              }}
+            >
+              {summaryMetrics.netReturn >= 0 ? "+" : ""}
+              {summaryMetrics.netReturn.toFixed(2)}%
+            </div>
+            <div
+              style={{
+                fontSize: "12px",
+                color: "#94a3b8",
+                marginTop: "4px",
+              }}
+            >
+              Excluyendo contribuciones
+            </div>
+          </div>
+
+          {/* Valor Actual del Portafolio */}
+          <div
+            style={{
+              border: "1px solid #e2e8f0",
+              borderRadius: "12px",
+              padding: "20px",
+              background: "#fff",
+            }}
+          >
+            <div
+              style={{
+                fontSize: "14px",
+                color: "#64748b",
+                marginBottom: "8px",
+              }}
+            >
+              Valor Actual del Portafolio
+            </div>
+            <div
+              style={{
+                fontSize: "28px",
+                fontWeight: "bold",
+                color: "#0f172a",
+                marginBottom: "12px",
+              }}
+            >
+              {formatNumber(summaryMetrics.currentPortfolioValue)}
+            </div>
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: "6px",
+                fontSize: "13px",
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span style={{ color: "#64748b" }}>Contribuciones:</span>
+                <span style={{ color: "#0f172a", fontWeight: "500" }}>
+                  {formatNumber(summaryMetrics.totalContributions)}
+                </span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span style={{ color: "#64748b" }}>Ganancia:</span>
+                <span
+                  style={{
+                    color: summaryMetrics.gain >= 0 ? "#16a34a" : "#dc2626",
+                    fontWeight: "500",
+                  }}
+                >
+                  {summaryMetrics.gain >= 0 ? "+" : ""}
+                  {formatNumber(summaryMetrics.gain)}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Portfolio Index */}
+          <div
+            style={{
+              border: "1px solid #e2e8f0",
+              borderRadius: "12px",
+              padding: "20px",
+              background: "#fff",
+            }}
+          >
+            <div
+              style={{
+                fontSize: "14px",
+                color: "#64748b",
+                marginBottom: "8px",
+              }}
+            >
+              Portfolio Index
+            </div>
+            <div
+              style={{
+                fontSize: "28px",
+                fontWeight: "bold",
+                color: "#0f172a",
+              }}
+            >
+              {summaryMetrics.currentIndex.toFixed(2)}
+            </div>
+            <div
+              style={{
+                fontSize: "12px",
+                color: "#94a3b8",
+                marginTop: "4px",
+              }}
+            >
+              Valor más reciente
+            </div>
+          </div>
+        </div>
+      )}
+
       {!hasData ? (
         <div
           style={{
@@ -472,10 +868,10 @@ export default function FirestoreGraph() {
         </div>
       ) : (
         <div style={{ display: "grid", gap: "16px" }}>
-          {/* Portfolio value + index */}
-          <ChartCard title="Portfolio value vs index">
-            <ResponsiveContainer width="100%" height={210}>
-              <LineChart data={data}>
+          {/* Portfolio value + index + contributions */}
+          <ChartCard title="Portfolio value vs index + contributions">
+            <ResponsiveContainer width="100%" height={220}>
+              <ComposedChart data={data}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                 <XAxis
                   dataKey="date"
@@ -483,26 +879,52 @@ export default function FirestoreGraph() {
                   tickMargin={8}
                 />
                 <YAxis
-                  tickFormatter={
-                    portfolioMetric === "index"
-                      ? (v) => v.toFixed(0)
-                      : formatNumber
-                  }
+                  yAxisId="left"
+                  tickFormatter={formatNumber}
                   tickMargin={8}
+                  domain={[
+                    (dataMin: number) => {
+                      const minContributions = Math.min(
+                        ...data.map((d) => d.contributions || 0)
+                      );
+                      const minPortfolio = Math.min(
+                        ...data.map((d) => d.portfolioValue || 0)
+                      );
+                      const min = Math.min(minContributions, minPortfolio);
+                      return Math.max(0, min * 0.9);
+                    },
+                    (dataMax: number) => {
+                      const maxContributions = Math.max(
+                        ...data.map((d) => d.contributions || 0)
+                      );
+                      const maxPortfolio = Math.max(
+                        ...data.map((d) => d.portfolioValue || 0)
+                      );
+                      const max = Math.max(maxContributions, maxPortfolio);
+                      return max * 1.1;
+                    },
+                  ]}
                 />
                 <Tooltip
                   labelFormatter={(v) => formatDateLabel(new Date(v))}
-                  formatter={(v, name) => [
-                    portfolioMetric === "index"
-                      ? Number(v).toFixed(0)
-                      : formatNumber(Number(v)),
-                    name,
-                  ]}
+                  formatter={(v, name) => [formatNumber(Number(v)), name]}
                 />
                 <Legend />
+                <Area
+                  yAxisId="left"
+                  type="monotone"
+                  dataKey="contributions"
+                  name="Contributions"
+                  stroke="#f59e0b"
+                  fill="#f59e0b"
+                  fillOpacity={0.3}
+                  strokeWidth={2}
+                  isAnimationActive={false}
+                />
                 {(portfolioMetric === "value" ||
                   portfolioMetric === "both") && (
                   <Line
+                    yAxisId="left"
                     type="monotone"
                     dataKey="portfolioValue"
                     name="Portfolio value"
@@ -511,43 +933,7 @@ export default function FirestoreGraph() {
                     strokeWidth={2}
                   />
                 )}
-                {(portfolioMetric === "index" ||
-                  portfolioMetric === "both") && (
-                  <Line
-                    type="monotone"
-                    dataKey="portfolioIndex"
-                    name="Portfolio index"
-                    stroke="#22c55e"
-                    dot={false}
-                    strokeWidth={2}
-                  />
-                )}
-              </LineChart>
-            </ResponsiveContainer>
-          </ChartCard>
-
-          {/* Contributions */}
-          <ChartCard title="Contributions por día">
-            <ResponsiveContainer width="100%" height={190}>
-              <BarChart data={contributions}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis
-                  dataKey="date"
-                  tickFormatter={(d) => formatDateShort(new Date(d))}
-                  tickMargin={8}
-                />
-                <YAxis tickFormatter={formatNumber} tickMargin={8} />
-                <Tooltip
-                  labelFormatter={(v) => formatDateLabel(new Date(v))}
-                  formatter={(v) => [formatNumber(Number(v)), "Contributions"]}
-                />
-                <Bar
-                  dataKey="contributions"
-                  name="Contributions"
-                  fill="#f59e0b"
-                  isAnimationActive={false}
-                />
-              </BarChart>
+              </ComposedChart>
             </ResponsiveContainer>
           </ChartCard>
 
@@ -570,6 +956,21 @@ export default function FirestoreGraph() {
                   formatter={(v) => [`${Number(v).toFixed(2)}%`, "Drawdown"]}
                 />
                 <ReferenceLine y={0} stroke="#94a3b8" strokeDasharray="4 4" />
+                {mdd && (
+                  <ReferenceLine
+                    y={mdd.mdd}
+                    stroke="#dc2626"
+                    strokeWidth={2}
+                    strokeDasharray="3 3"
+                    label={{
+                      value: `MDD: ${mdd.mdd.toFixed(2)}%`,
+                      position: "right",
+                      fill: "#dc2626",
+                      fontSize: 12,
+                      fontWeight: "bold",
+                    }}
+                  />
+                )}
                 <Line
                   type="monotone"
                   dataKey="drawdownPct"
@@ -579,6 +980,78 @@ export default function FirestoreGraph() {
                   strokeWidth={2}
                 />
               </LineChart>
+            </ResponsiveContainer>
+          </ChartCard>
+
+          {/* Portfolio value vs index normalized */}
+          <ChartCard
+            title={`Portfolio value vs index + contributions${
+              hasData && (sharpeRatio !== 0 || indexSharpeRatio !== 0)
+                ? ` (Sharpe Portfolio: ${sharpeRatio.toFixed(
+                    2
+                  )}, Sharpe Index: ${indexSharpeRatio.toFixed(2)})`
+                : ""
+            }`}
+          >
+            <ResponsiveContainer width="100%" height={220}>
+              <ComposedChart data={dataNormalized}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                <XAxis
+                  dataKey="date"
+                  tickFormatter={(d) => formatDateShort(new Date(d))}
+                  tickMargin={8}
+                />
+                <YAxis
+                  yAxisId="left"
+                  tickFormatter={formatNumber}
+                  tickMargin={8}
+                  domain={[90, (dataMax: number) => Math.max(dataMax, 120)]}
+                />
+                <YAxis
+                  yAxisId="right"
+                  orientation="right"
+                  domain={[60, (dataMax: number) => Math.max(dataMax, 140)]}
+                  tickFormatter={(v) => Number(v).toFixed(0)}
+                  tickMargin={8}
+                />
+                <Tooltip
+                  labelFormatter={(v) => formatDateLabel(new Date(v))}
+                  formatter={(v, name) => {
+                    const lname = name?.toString().toLowerCase() ?? "";
+                    const isIndex = lname.includes("index");
+                    if (isIndex) return [Number(v).toFixed(0), name];
+                    return [formatNumber(Number(v)), name];
+                  }}
+                />
+                <Legend />
+                {(portfolioMetric === "value" ||
+                  portfolioMetric === "both") && (
+                  <Line
+                    yAxisId="left"
+                    type="monotone"
+                    dataKey="portfolioValueNormalized"
+                    name="Portfolio value normalized"
+                    stroke="#2563eb"
+                    dot={false}
+                    strokeWidth={3}
+                    strokeOpacity={1}
+                  />
+                )}
+                {(portfolioMetric === "index" ||
+                  portfolioMetric === "both") && (
+                  <Line
+                    yAxisId="left"
+                    type="monotone"
+                    dataKey="portfolioIndex"
+                    name="Portfolio index"
+                    stroke="#22c55e"
+                    dot={false}
+                    strokeWidth={2}
+                    strokeDasharray="5 5"
+                    strokeOpacity={0.8}
+                  />
+                )}
+              </ComposedChart>
             </ResponsiveContainer>
           </ChartCard>
 
