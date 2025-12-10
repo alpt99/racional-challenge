@@ -23,15 +23,11 @@ import {
 import { Timestamp } from "firebase/firestore";
 import { InvestmentEvolution, subscribeToDocument } from "./firestoreService";
 
-type RangeKey = "1H" | "1D" | "1W" | "1M" | "3M" | "1Y" | "YTD" | "MAX";
+type RangeKey = "1W" | "1M" | "3M" | "1Y" | "YTD" | "MAX";
 type WithDate = InvestmentEvolution & { date: Date; id?: string };
-type PortfolioMetric = "value" | "index" | "both";
 const HISTOGRAM_MAX_BINS = 100;
-const BETA_DOMAIN_PADDING = 0.05;
 
 const RANGE_OPTS: { label: string; key: RangeKey }[] = [
-  { key: "1H", label: "1H" },
-  { key: "1D", label: "1D" },
   { key: "1W", label: "1W" },
   { key: "1M", label: "1M" },
   { key: "3M", label: "3M" },
@@ -90,22 +86,12 @@ function normalizeToArray(raw: any): WithDate[] {
     .filter(Boolean) as WithDate[];
 }
 
-function daysDiff(a: Date, b: Date) {
-  return (a.getTime() - b.getTime()) / (1000 * 60 * 60 * 24);
-}
-
 function filterByRange(data: WithDate[], range: RangeKey) {
   if (range === "MAX" || !data.length) return data;
   const anchor = data[data.length - 1]?.date ?? new Date();
   let cutoff = new Date(anchor);
 
   switch (range) {
-    case "1H":
-      cutoff = new Date(anchor.getTime() - 1 * 60 * 60 * 1000);
-      break;
-    case "1D":
-      cutoff = new Date(anchor.getTime() - 24 * 60 * 60 * 1000);
-      break;
     case "1W":
       cutoff = new Date(anchor.getTime() - 7 * 24 * 60 * 60 * 1000);
       break;
@@ -221,79 +207,6 @@ function computeHistogram(
   return { bins, domain, binSize };
 }
 
-type ReturnPair = {
-  date: Date;
-  portfolioReturn: number;
-  benchmarkReturn: number;
-};
-
-function buildReturnPairs(data: WithDate[]): ReturnPair[] {
-  if (data.length < 2) return [];
-  const pairs: ReturnPair[] = [];
-  let prevIndex = data[0].portfolioIndex || 0;
-  for (let i = 1; i < data.length; i++) {
-    const curr = data[i];
-    const bench =
-      prevIndex > 0 ? ((curr.portfolioIndex - prevIndex) / prevIndex) * 100 : 0;
-    const portfolio = Number(curr.dailyReturn ?? 0);
-    if (!Number.isNaN(portfolio) && !Number.isNaN(bench)) {
-      pairs.push({
-        date: curr.date,
-        portfolioReturn: portfolio,
-        benchmarkReturn: bench,
-      });
-    }
-    prevIndex = curr.portfolioIndex || prevIndex;
-  }
-  return pairs;
-}
-
-type BetaStats = {
-  beta: number;
-  alpha: number;
-  r2: number;
-  regression: { x: number; y: number }[];
-};
-
-function computeBetaStats(pairs: ReturnPair[]): BetaStats {
-  if (pairs.length < 2) return { beta: 0, alpha: 0, r2: 0, regression: [] };
-  const xs = pairs.map((p) => p.benchmarkReturn);
-  const ys = pairs.map((p) => p.portfolioReturn);
-  const meanX = xs.reduce((a, b) => a + b, 0) / xs.length;
-  const meanY = ys.reduce((a, b) => a + b, 0) / ys.length;
-  const cov =
-    xs.reduce((acc, x, idx) => acc + (x - meanX) * (ys[idx] - meanY), 0) /
-    xs.length;
-  const varX =
-    xs.reduce((acc, x) => acc + Math.pow(x - meanX, 2), 0) / xs.length;
-  const varY =
-    ys.reduce((acc, y) => acc + Math.pow(y - meanY, 2), 0) / ys.length;
-  const beta = varX ? cov / varX : 0;
-  const alpha = meanY - beta * meanX;
-  const r2 =
-    varX && varY ? Math.min(1, Math.max(0, (cov * cov) / (varX * varY))) : 0;
-  const minX = Math.min(...xs);
-  const maxX = Math.max(...xs);
-  const regression = [
-    { x: minX, y: alpha + beta * minX },
-    { x: maxX, y: alpha + beta * maxX },
-  ];
-  return { beta, alpha, r2, regression };
-}
-
-function colorForReturn(value: number, mean: number, stdev: number) {
-  // Divergente rojo (negativo) a verde (positivo), centrado en la media.
-  const spread = stdev || 1;
-  const z = Math.max(-2, Math.min(2, (value - mean) / spread)); // clamp [-2,2]
-  const t = (z + 2) / 4; // [0,1]
-  // Interpolación manual entre rojo (#ef4444) y verde (#16a34a)
-  const lerp = (a: number, b: number) => Math.round(a + (b - a) * t);
-  const r = lerp(239, 22);
-  const g = lerp(68, 163);
-  const b = lerp(68, 74);
-  return `rgb(${r}, ${g}, ${b})`;
-}
-
 function normalizePortfolioValueForComparisson(data: WithDate[]) {
   if (!data || data.length === 0) return data;
 
@@ -316,205 +229,23 @@ function normalizePortfolioValueForComparisson(data: WithDate[]) {
   return newData;
 }
 
-function computeSharpeRatio(data: WithDate[]): number {
-  if (!data || data.length === 0) return 0;
+function computeIndexStats(data: WithDate[]): { mean: number; stdev: number } {
+  if (!data || data.length === 0) return { mean: 0, stdev: 0 };
 
-  const returns = data
-    .map((d) => d.dailyReturn ?? 0)
-    .filter((r) => !Number.isNaN(r));
+  // Calculate mean and standard deviation directly from portfolio index values
+  const indexValues = data
+    .map((d) => d.portfolioIndex || 0)
+    .filter((v) => !Number.isNaN(v) && v > 0);
 
-  if (returns.length === 0) return 0;
+  if (indexValues.length === 0) return { mean: 0, stdev: 0 };
 
-  const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
+  const mean = indexValues.reduce((a, b) => a + b, 0) / indexValues.length;
   const variance =
-    returns.reduce((acc, r) => acc + Math.pow(r - mean, 2), 0) / returns.length;
+    indexValues.reduce((acc, v) => acc + Math.pow(v - mean, 2), 0) /
+    indexValues.length;
   const stdev = Math.sqrt(variance);
 
-  // If standard deviation is zero, return 0 (no risk, undefined Sharpe)
-  if (stdev === 0) return 0;
-
-  // Annualize: multiply by sqrt(252) trading days per year
-  // dailyReturn is already in decimal format (e.g., 0.05 for 5%)
-  const sharpe = (mean / stdev) * Math.sqrt(252);
-
-  return sharpe;
-}
-
-function computeIndexSharpeRatio(data: WithDate[]): number {
-  if (!data || data.length < 2) return 0;
-
-  // Calculate daily returns from portfolio index
-  const returns: number[] = [];
-  let prevIndex = data[0].portfolioIndex || 0;
-
-  for (let i = 1; i < data.length; i++) {
-    const currIndex = data[i].portfolioIndex || 0;
-    if (prevIndex > 0) {
-      // Calculate return as decimal (e.g., 0.05 for 5%)
-      const dailyReturn = (currIndex - prevIndex) / prevIndex;
-      if (!Number.isNaN(dailyReturn)) {
-        returns.push(dailyReturn);
-      }
-    }
-    prevIndex = currIndex || prevIndex;
-  }
-
-  if (returns.length === 0) return 0;
-
-  const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
-  const variance =
-    returns.reduce((acc, r) => acc + Math.pow(r - mean, 2), 0) / returns.length;
-  const stdev = Math.sqrt(variance);
-
-  // If standard deviation is zero, return 0 (no risk, undefined Sharpe)
-  if (stdev === 0) return 0;
-
-  // Annualize: multiply by sqrt(252) trading days per year
-  const sharpe = (mean / stdev) * Math.sqrt(252);
-
-  return sharpe;
-}
-
-function percentile(sortedArray: number[], p: number): number {
-  if (sortedArray.length === 0) return 0;
-  const index = (sortedArray.length - 1) * p;
-  const lower = Math.floor(index);
-  const upper = Math.ceil(index);
-  const weight = index - lower;
-  return sortedArray[lower] * (1 - weight) + sortedArray[upper] * weight;
-}
-
-type BoxplotStats = {
-  min: number;
-  q1: number;
-  median: number;
-  q3: number;
-  max: number;
-};
-
-function computeBoxplotStats(data: WithDate[]): {
-  portfolio: BoxplotStats;
-  index: BoxplotStats;
-} {
-  // Portfolio returns (already in decimal format)
-  const portfolioReturns = data
-    .map((d) => d.dailyReturn ?? 0)
-    .filter((r) => !Number.isNaN(r))
-    .sort((a, b) => a - b);
-
-  // Index returns (calculate from portfolioIndex)
-  const indexReturns: number[] = [];
-  let prevIndex = data[0]?.portfolioIndex || 0;
-  for (let i = 1; i < data.length; i++) {
-    const currIndex = data[i].portfolioIndex || 0;
-    if (prevIndex > 0) {
-      const dailyReturn = (currIndex - prevIndex) / prevIndex;
-      if (!Number.isNaN(dailyReturn)) {
-        indexReturns.push(dailyReturn);
-      }
-    }
-    prevIndex = currIndex || prevIndex;
-  }
-  indexReturns.sort((a, b) => a - b);
-
-  const computeStats = (returns: number[]): BoxplotStats => {
-    if (returns.length === 0) {
-      return { min: 0, q1: 0, median: 0, q3: 0, max: 0 };
-    }
-    return {
-      min: returns[0],
-      q1: percentile(returns, 0.25),
-      median: percentile(returns, 0.5),
-      q3: percentile(returns, 0.75),
-      max: returns[returns.length - 1],
-    };
-  };
-
-  return {
-    portfolio: computeStats(portfolioReturns),
-    index: computeStats(indexReturns),
-  };
-}
-
-type MonthlyBoxplotData = {
-  month: string;
-  date: Date;
-  portfolio: BoxplotStats;
-  index: BoxplotStats;
-};
-
-function computeMonthlyBoxplotStats(data: WithDate[]): MonthlyBoxplotData[] {
-  if (!data || data.length === 0) return [];
-
-  // Group data by month
-  const monthlyData = new Map<
-    string,
-    { portfolioReturns: number[]; indexReturns: number[]; date: Date }
-  >();
-
-  let prevIndex = data[0]?.portfolioIndex || 0;
-
-  data.forEach((d, i) => {
-    const monthKey = `${d.date.getFullYear()}-${String(
-      d.date.getMonth() + 1
-    ).padStart(2, "0")}`;
-
-    if (!monthlyData.has(monthKey)) {
-      monthlyData.set(monthKey, {
-        portfolioReturns: [],
-        indexReturns: [],
-        date: d.date,
-      });
-    }
-
-    const monthData = monthlyData.get(monthKey)!;
-
-    // Portfolio return
-    const portfolioReturn = d.dailyReturn ?? 0;
-    if (!Number.isNaN(portfolioReturn)) {
-      monthData.portfolioReturns.push(portfolioReturn);
-    }
-
-    // Index return
-    if (i > 0 && prevIndex > 0) {
-      const currIndex = d.portfolioIndex || 0;
-      const indexReturn = (currIndex - prevIndex) / prevIndex;
-      if (!Number.isNaN(indexReturn)) {
-        monthData.indexReturns.push(indexReturn);
-      }
-      prevIndex = currIndex;
-    } else if (i === 0) {
-      prevIndex = d.portfolioIndex || 0;
-    }
-  });
-
-  // Calculate stats for each month
-  const result: MonthlyBoxplotData[] = [];
-  monthlyData.forEach((monthData, monthKey) => {
-    const computeStats = (returns: number[]): BoxplotStats => {
-      if (returns.length === 0) {
-        return { min: 0, q1: 0, median: 0, q3: 0, max: 0 };
-      }
-      const sorted = [...returns].sort((a, b) => a - b);
-      return {
-        min: sorted[0],
-        q1: percentile(sorted, 0.25),
-        median: percentile(sorted, 0.5),
-        q3: percentile(sorted, 0.75),
-        max: sorted[sorted.length - 1],
-      };
-    };
-
-    result.push({
-      month: monthKey,
-      date: monthData.date,
-      portfolio: computeStats(monthData.portfolioReturns),
-      index: computeStats(monthData.indexReturns),
-    });
-  });
-
-  // Sort by date
-  return result.sort((a, b) => a.date.getTime() - b.date.getTime());
+  return { mean, stdev };
 }
 
 function formatDateLabel(d: Date) {
@@ -536,17 +267,14 @@ const formatPercent = (value: number) => `${value.toFixed(2)}%`;
 export default function FirestoreGraph() {
   const [raw, setRaw] = useState<any | null>(null);
   const [range, setRange] = useState<RangeKey>("MAX");
-  const [portfolioMetric, setPortfolioMetric] =
-    useState<PortfolioMetric>("both");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   useEffect(() => {
     const unsub = subscribeToDocument("investmentEvolutions/user1", (data) => {
       setRaw(data);
       setLastUpdated(new Date());
-      // Debug: keep a console trace for sanity
       // eslint-disable-next-line no-console
-      console.log("Firestore live data", data);
+      //   console.log("Firestore live data", data);
     });
     return () => unsub();
   }, []);
@@ -557,37 +285,30 @@ export default function FirestoreGraph() {
     [raw]
   );
 
+  // Calculate normalized values on ALL data first (to maintain consistent starting point)
+  const parsedNormalized = useMemo(
+    () => normalizePortfolioValueForComparisson(parsed),
+    [parsed]
+  );
+
+  // Then filter both datasets
   const data = useMemo(() => filterByRange(parsed, range), [parsed, range]);
   const dataNormalized = useMemo(
-    () => normalizePortfolioValueForComparisson(data),
-    [data]
+    () => filterByRange(parsedNormalized, range),
+    [parsedNormalized, range]
   );
+
+  // Calculate date range for display
+  const dateRange = useMemo(() => {
+    if (!data || data.length === 0) return null;
+    const startDate = data[0]?.date;
+    const endDate = data[data.length - 1]?.date;
+    return { startDate, endDate };
+  }, [data]);
   const dailyStats = useMemo(() => computeStats(data, "dailyReturn"), [data]);
-  const sharpeRatio = useMemo(() => computeSharpeRatio(data), [data]);
-  const indexSharpeRatio = useMemo(() => computeIndexSharpeRatio(data), [data]);
+  const indexStats = useMemo(() => computeIndexStats(data), [data]);
   const drawdown = useMemo(() => computeDrawdown(data), [data]);
   const mdd = useMemo(() => computeMaximumDrawdown(drawdown), [drawdown]);
-  const boxplotStats = useMemo(() => computeBoxplotStats(data), [data]);
-  const monthlyBoxplotStats = useMemo(
-    () => computeMonthlyBoxplotStats(data),
-    [data]
-  );
-  const monthlyBoxplotData = useMemo(() => {
-    return monthlyBoxplotStats.map((m) => ({
-      month: m.month,
-      date: m.date,
-      portfolioMin: m.portfolio.min * 100,
-      portfolioQ1: m.portfolio.q1 * 100,
-      portfolioMedian: m.portfolio.median * 100,
-      portfolioQ3: m.portfolio.q3 * 100,
-      portfolioMax: m.portfolio.max * 100,
-      indexMin: m.index.min * 100,
-      indexQ1: m.index.q1 * 100,
-      indexMedian: m.index.median * 100,
-      indexQ3: m.index.q3 * 100,
-      indexMax: m.index.max * 100,
-    }));
-  }, [monthlyBoxplotStats]);
   const histogramResult = useMemo(
     () =>
       computeHistogram(data, {
@@ -598,8 +319,6 @@ export default function FirestoreGraph() {
   );
   const histogram = histogramResult.bins;
   const histogramDomain = histogramResult.domain;
-  const returnPairs = useMemo(() => buildReturnPairs(data), [data]);
-  const betaStats = useMemo(() => computeBetaStats(returnPairs), [returnPairs]);
 
   // Summary metrics
   const summaryMetrics = useMemo(() => {
@@ -613,20 +332,21 @@ export default function FirestoreGraph() {
       };
     }
 
-    const initialValue = data[0]?.portfolioValue || 0;
     const currentValue = data[data.length - 1]?.portfolioValue || 0;
     const currentIndex = data[data.length - 1]?.portfolioIndex || 0;
 
-    // Use last value of contributions (already cumulative)
     const totalContributions = data[data.length - 1]?.contributions || 0;
-    const initialContributions = data[0]?.contributions || 0;
 
-    // Calculate net return using normalized portfolio value (indexed return)
-    // portfolioValueNormalized starts at 100, so return = (finalNormalized / 100 - 1) * 100
+    const firstNormalized = dataNormalized[0] as any;
     const lastNormalized = dataNormalized[dataNormalized.length - 1] as any;
+    const initialNormalizedValue =
+      firstNormalized?.portfolioValueNormalized || 100;
     const finalNormalizedValue =
       lastNormalized?.portfolioValueNormalized || 100;
-    const netReturn = (finalNormalizedValue / 100 - 1) * 100;
+    const netReturn =
+      initialNormalizedValue > 0
+        ? (finalNormalizedValue / initialNormalizedValue - 1) * 100
+        : 0;
 
     const gain = currentValue - totalContributions;
 
@@ -662,7 +382,7 @@ export default function FirestoreGraph() {
         }}
       >
         <div>
-          <h1 style={{ margin: 0 }}>Investment Dashboard</h1>
+          <h1 style={{ margin: 0 }}>Dashboard - Racional App Challenge</h1>
           <p style={{ margin: "4px 0", color: "#475569" }}>
             Datos en tiempo real desde Firestore — user1
           </p>
@@ -684,28 +404,23 @@ export default function FirestoreGraph() {
               {opt.label}
             </button>
           ))}
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-            <span style={{ color: "#475569", fontSize: 13 }}>Serie:</span>
-            <select
-              value={portfolioMetric}
-              onChange={(e) =>
-                setPortfolioMetric(e.target.value as PortfolioMetric)
-              }
-              style={{
-                padding: "6px 10px",
-                borderRadius: "10px",
-                border: "1px solid #e2e8f0",
-                background: "#fff",
-                color: "#0f172a",
-              }}
-            >
-              <option value="value">Portfolio value</option>
-              <option value="index">Portfolio index</option>
-              <option value="both">Ambos</option>
-            </select>
-          </div>
         </div>
       </header>
+      {dateRange && (
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "right",
+            alignItems: "center",
+            padding: "8px 0",
+            color: "#64748b",
+            fontSize: "13px",
+          }}
+        >
+          Período: {formatDateLabel(dateRange.startDate)} -{" "}
+          {formatDateLabel(dateRange.endDate)}
+        </div>
+      )}
 
       {hasData && (
         <div
@@ -743,15 +458,6 @@ export default function FirestoreGraph() {
             >
               {summaryMetrics.netReturn >= 0 ? "+" : ""}
               {summaryMetrics.netReturn.toFixed(2)}%
-            </div>
-            <div
-              style={{
-                fontSize: "12px",
-                color: "#94a3b8",
-                marginTop: "4px",
-              }}
-            >
-              Excluyendo contribuciones
             </div>
           </div>
 
@@ -812,7 +518,7 @@ export default function FirestoreGraph() {
             </div>
           </div>
 
-          {/* Portfolio Index */}
+          {/* Valor Actual del Indice de Referencia */}
           <div
             style={{
               border: "1px solid #e2e8f0",
@@ -828,7 +534,7 @@ export default function FirestoreGraph() {
                 marginBottom: "8px",
               }}
             >
-              Portfolio Index
+              Valor Actual del Indice de Referencia
             </div>
             <div
               style={{
@@ -845,9 +551,7 @@ export default function FirestoreGraph() {
                 color: "#94a3b8",
                 marginTop: "4px",
               }}
-            >
-              Valor más reciente
-            </div>
+            ></div>
           </div>
         </div>
       )}
@@ -868,8 +572,8 @@ export default function FirestoreGraph() {
         </div>
       ) : (
         <div style={{ display: "grid", gap: "16px" }}>
-          {/* Portfolio value + index + contributions */}
-          <ChartCard title="Portfolio value vs index + contributions">
+          {/* Portfolio value + contributions */}
+          <ChartCard title="Valor del Portafolio y Contribuciones">
             <ResponsiveContainer width="100%" height={220}>
               <ComposedChart data={data}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
@@ -907,32 +611,46 @@ export default function FirestoreGraph() {
                 />
                 <Tooltip
                   labelFormatter={(v) => formatDateLabel(new Date(v))}
-                  formatter={(v, name) => [formatNumber(Number(v)), name]}
+                  formatter={(v, name) => {
+                    const value = Number(v);
+                    const nameStr = name?.toString().toLowerCase() || "";
+                    if (
+                      nameStr.includes("portfolio") ||
+                      nameStr.includes("value") ||
+                      nameStr.includes("contribution")
+                    ) {
+                      return [
+                        new Intl.NumberFormat("en", {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        }).format(value),
+                        name,
+                      ];
+                    }
+                    return [formatNumber(value), name];
+                  }}
                 />
                 <Legend />
                 <Area
                   yAxisId="left"
                   type="monotone"
                   dataKey="contributions"
-                  name="Contributions"
+                  name="Contribuciones"
                   stroke="#f59e0b"
                   fill="#f59e0b"
                   fillOpacity={0.3}
                   strokeWidth={2}
                   isAnimationActive={false}
                 />
-                {(portfolioMetric === "value" ||
-                  portfolioMetric === "both") && (
-                  <Line
-                    yAxisId="left"
-                    type="monotone"
-                    dataKey="portfolioValue"
-                    name="Portfolio value"
-                    stroke="#2563eb"
-                    dot={false}
-                    strokeWidth={2}
-                  />
-                )}
+                <Line
+                  yAxisId="left"
+                  type="monotone"
+                  dataKey="portfolioValue"
+                  name="Valor del Portafolio"
+                  stroke="#2563eb"
+                  dot={false}
+                  strokeWidth={2}
+                />
               </ComposedChart>
             </ResponsiveContainer>
           </ChartCard>
@@ -985,16 +703,16 @@ export default function FirestoreGraph() {
 
           {/* Portfolio value vs index normalized */}
           <ChartCard
-            title={`Portfolio value vs index + contributions${
-              hasData && (sharpeRatio !== 0 || indexSharpeRatio !== 0)
-                ? ` (Sharpe Portfolio: ${sharpeRatio.toFixed(
+            title={`Valor del Indice de Referencia${
+              hasData && indexStats.stdev !== 0
+                ? ` (Media: ${indexStats.mean.toFixed(
                     2
-                  )}, Sharpe Index: ${indexSharpeRatio.toFixed(2)})`
+                  )}, σ: ${indexStats.stdev.toFixed(2)})`
                 : ""
             }`}
           >
             <ResponsiveContainer width="100%" height={220}>
-              <ComposedChart data={dataNormalized}>
+              <LineChart data={dataNormalized}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                 <XAxis
                   dataKey="date"
@@ -1002,56 +720,39 @@ export default function FirestoreGraph() {
                   tickMargin={8}
                 />
                 <YAxis
-                  yAxisId="left"
-                  tickFormatter={formatNumber}
+                  tickFormatter={(v) => Number(v).toFixed(2)}
                   tickMargin={8}
-                  domain={[90, (dataMax: number) => Math.max(dataMax, 120)]}
-                />
-                <YAxis
-                  yAxisId="right"
-                  orientation="right"
-                  domain={[60, (dataMax: number) => Math.max(dataMax, 140)]}
-                  tickFormatter={(v) => Number(v).toFixed(0)}
-                  tickMargin={8}
+                  domain={[
+                    (dataMin: number) => {
+                      const minIndex = Math.min(
+                        ...dataNormalized.map((d) => d.portfolioIndex || 0)
+                      );
+                      return Math.max(0, minIndex * 0.95);
+                    },
+                    (dataMax: number) => {
+                      const maxIndex = Math.max(
+                        ...dataNormalized.map((d) => d.portfolioIndex || 0)
+                      );
+                      return maxIndex * 1.05;
+                    },
+                  ]}
                 />
                 <Tooltip
                   labelFormatter={(v) => formatDateLabel(new Date(v))}
-                  formatter={(v, name) => {
-                    const lname = name?.toString().toLowerCase() ?? "";
-                    const isIndex = lname.includes("index");
-                    if (isIndex) return [Number(v).toFixed(0), name];
-                    return [formatNumber(Number(v)), name];
-                  }}
+                  formatter={(v) => [Number(v).toFixed(2), "Portfolio index"]}
                 />
                 <Legend />
-                {(portfolioMetric === "value" ||
-                  portfolioMetric === "both") && (
-                  <Line
-                    yAxisId="left"
-                    type="monotone"
-                    dataKey="portfolioValueNormalized"
-                    name="Portfolio value normalized"
-                    stroke="#2563eb"
-                    dot={false}
-                    strokeWidth={3}
-                    strokeOpacity={1}
-                  />
-                )}
-                {(portfolioMetric === "index" ||
-                  portfolioMetric === "both") && (
-                  <Line
-                    yAxisId="left"
-                    type="monotone"
-                    dataKey="portfolioIndex"
-                    name="Portfolio index"
-                    stroke="#22c55e"
-                    dot={false}
-                    strokeWidth={2}
-                    strokeDasharray="5 5"
-                    strokeOpacity={0.8}
-                  />
-                )}
-              </ComposedChart>
+                <Line
+                  type="monotone"
+                  dataKey="portfolioIndex"
+                  name="Portfolio index"
+                  stroke="#22c55e"
+                  dot={false}
+                  strokeWidth={2}
+                  strokeDasharray="5 5"
+                  strokeOpacity={0.8}
+                />
+              </LineChart>
             </ResponsiveContainer>
           </ChartCard>
 
@@ -1116,6 +817,8 @@ export default function FirestoreGraph() {
                       justifyContent: "space-between",
                       flexGrow: 1,
                       margin: 1,
+                      minHeight: 220,
+                      height: "28vh",
                     }}
                   >
                     <h3 style={{ margin: "0 0 12px", fontSize: "16px" }}>
@@ -1172,96 +875,6 @@ export default function FirestoreGraph() {
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
-                  <div
-                    style={{
-                      minHeight: 220,
-                      height: "28vh",
-                      display: "flex",
-                      flexDirection: "column",
-                      justifyContent: "space-between",
-                      margin: 1,
-                      //   gap: 8,
-                      flexGrow: 1,
-                    }}
-                  >
-                    <h3 style={{ margin: "0 0 12px", fontSize: "16px" }}>
-                      Regresión lineal entre retornos (portfolio) vs retornos
-                      (portafolio index)
-                    </h3>
-                    <ResponsiveContainer width="100%" height="100%">
-                      <ScatterChart
-                        margin={{ top: 1, right: 1, left: 1, bottom: 1 }}
-                      >
-                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                        <XAxis
-                          type="number"
-                          dataKey="benchmarkReturn"
-                          name="Benchmark"
-                          tickFormatter={(v) => `${v.toFixed(2)}%`}
-                          tickMargin={8}
-                          tick={{ fontSize: 11 }}
-                          tickCount={5}
-                          domain={[
-                            (dataMin: number) => dataMin - BETA_DOMAIN_PADDING,
-                            (dataMax: number) => dataMax + BETA_DOMAIN_PADDING,
-                          ]}
-                        />
-                        <YAxis
-                          type="number"
-                          dataKey="portfolioReturn"
-                          name="Portfolio"
-                          tickFormatter={(v) => `${v.toFixed(2)}%`}
-                          tickMargin={8}
-                          tick={{ fontSize: 11 }}
-                          tickCount={5}
-                          domain={[
-                            (dataMin: number) => dataMin - BETA_DOMAIN_PADDING,
-                            (dataMax: number) => dataMax + BETA_DOMAIN_PADDING,
-                          ]}
-                        />
-                        <Tooltip
-                          formatter={(v, name) => [
-                            `${Number(v).toFixed(2)}%`,
-                            name,
-                          ]}
-                        />
-                        <ReferenceLine x={0} stroke="#cbd5e1" />
-                        <ReferenceLine y={0} stroke="#cbd5e1" />
-                        <Scatter
-                          name="Puntos diarios"
-                          data={returnPairs}
-                          fill="#7c3aed"
-                          fillOpacity={0.7}
-                          r={3.6}
-                        />
-                        {betaStats.regression.length ? (
-                          <Line
-                            data={betaStats.regression}
-                            type="monotone"
-                            dataKey="y"
-                            stroke="#22c55e"
-                            dot={false}
-                            strokeWidth={1.6}
-                          />
-                        ) : null}
-                      </ScatterChart>
-                    </ResponsiveContainer>
-                    <div
-                      style={{
-                        marginTop: 1,
-                        display: "flex",
-                        gap: 10,
-                        flexWrap: "wrap",
-                        fontSize: 12,
-                        color: "#0f172a",
-                        alignItems: "center",
-                      }}
-                    >
-                      <StatPill label="Beta" value={betaStats.beta} />
-                      <StatPill label="Alpha" value={betaStats.alpha} />
-                      <StatPill label="R²" value={betaStats.r2} />
-                    </div>
-                  </div>
                 </div>
               </div>
             )}
@@ -1285,25 +898,6 @@ export default function FirestoreGraph() {
         </div>
       </ChartCard>
     </div>
-  );
-}
-
-function StatPill({ label, value }: { label: string; value: number }) {
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 4,
-        border: "1px solid #e2e8f0",
-        borderRadius: 12,
-        padding: "6px 10px",
-        background: "#f8fafc",
-        lineHeight: 1.2,
-      }}
-    >
-      {label}: {value.toFixed(2)}
-    </span>
   );
 }
 
