@@ -1,0 +1,156 @@
+{
+	"info": {
+		"_postman_id": "ac1dde1e-1bf1-45a7-acd0-f135b451c1a7",
+		"name": "RacionalChallenge",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "34124700"
+	},
+	"item": [
+		{
+			"name": "CashMovementPost",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"type\": \"DEPOSIT\",\n    \"amount\": 1000,\n    \"currency\": \"USD\",\n    \"note\": \"Initial deposit\"\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://localhost:3000/api/portfolios/fa767471-118c-47a2-99a7-998506bb26e1/cashMovements",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "3000",
+					"path": [
+						"api",
+						"portfolios",
+						"fa767471-118c-47a2-99a7-998506bb26e1",
+						"cashMovements"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "OrderPost",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"stockId\": \"d894a3bf-5316-49dc-bcd9-3004be5ab0ca\",\n    \"side\": \"SELL\",\n    \"quantity\": 2,\n    \"price\": 100,\n    \"currency\": \"usd\"\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://localhost:3000/api/portfolios/fa767471-118c-47a2-99a7-998506bb26e1/orders",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "3000",
+					"path": [
+						"api",
+						"portfolios",
+						"fa767471-118c-47a2-99a7-998506bb26e1",
+						"orders"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Portfolio history",
+			"request": {
+				"method": "GET",
+				"header": []
+			},
+			"response": []
+		},
+		{
+			"name": "Current portfolio info",
+			"request": {
+				"method": "GET",
+				"header": []
+			},
+			"response": []
+		},
+		{
+			"name": "Latest actions from portfolio",
+			"request": {
+				"method": "GET",
+				"header": []
+			},
+			"response": []
+		},
+		{
+			"name": "Edit portfolio",
+			"request": {
+				"method": "PATCH",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"name\": \"portafolio modificado\"\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://localhost:3000/api/portfolios/fa767471-118c-47a2-99a7-998506bb26e1",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "3000",
+					"path": [
+						"api",
+						"portfolios",
+						"fa767471-118c-47a2-99a7-998506bb26e1"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Edit user",
+			"request": {
+				"method": "PATCH",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"name\": \"changed\",\n    \"phone\": \"+569 971123432\"\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://localhost:3000/api/users/1",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "3000",
+					"path": [
+						"api",
+						"users",
+						"1"
+					]
+				}
+			},
+			"response": []
+		}
+	]
+}
