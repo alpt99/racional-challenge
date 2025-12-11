@@ -32,9 +32,7 @@ export const portfolioApplication = {
   },
 
   updatePortfolioTotals: async (input: UpdatePortfolioTotalsInput) => {
-    console.log("updatePortfolioTotals", input);
     const payload = updatePortfolioTotalsSchema.parse(input);
-    console.log("payload", payload);
     return portfolioRepository.update(payload.id, {
       totalValue: payload.totalValue,
       cashValue: payload.cashValue,
@@ -55,10 +53,6 @@ export const portfolioApplication = {
         code: "PORTFOLIO_NOT_FOUND",
       });
     }
-    console.log("delta", delta);
-    console.log("portfolio.cashValue", portfolio.cashValue);
-    console.log("portfolio.totalValue", portfolio.totalValue);
-    console.log("portfolio.investedValue", portfolio.investedValue);
     return await portfolioApplication.updatePortfolioTotals({
       id,
       cashValue: Number(portfolio.cashValue) + delta,
@@ -93,7 +87,6 @@ export const portfolioApplication = {
         code: "PORTFOLIO_NOT_FOUND",
       });
     }
-    console.log("limit", limit);
     const actions = await Promise.all([
       portfolioRepository.findLatestCashMovements(id, limit),
       portfolioRepository.findLatestOrders(id, limit),

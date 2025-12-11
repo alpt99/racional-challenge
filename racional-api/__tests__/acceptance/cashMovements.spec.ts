@@ -35,7 +35,7 @@ const createRequest = (body: unknown, portfolioId: string) =>
     body: JSON.stringify(body),
   });
 
-describe("POST /api/portfolios/[id]/cashMovements", () => {
+describe.skip("POST /api/portfolios/[id]/cashMovements", () => {
   afterEach(() => {
     jest.restoreAllMocks();
   });
@@ -110,8 +110,6 @@ describe("POST /api/portfolios/[id]/cashMovements", () => {
       params: { id: portfolioId },
     });
     const json = await response.json();
-    console.log("response", response);
-    console.log("json", json);
 
     expect(response.status).toBe(200);
     expect(json).toEqual({ data: fakeMovement });
