@@ -882,22 +882,6 @@ export default function FirestoreGraph() {
           </ChartCard>
         </div>
       )}
-      <ChartCard title="Datos crudos (debug)">
-        <div
-          style={{
-            whiteSpace: "pre-wrap",
-            fontFamily: "Menlo, monospace",
-            fontSize: "12px",
-            color: "#0f172a",
-          }}
-        >
-          <div style={{ marginBottom: 8, color: "#475569" }}>
-            Última actualización:{" "}
-            {lastUpdated ? lastUpdated.toISOString() : "—"}
-          </div>
-          <code>{JSON.stringify(raw, null, 2)}</code>
-        </div>
-      </ChartCard>
     </div>
   );
 }

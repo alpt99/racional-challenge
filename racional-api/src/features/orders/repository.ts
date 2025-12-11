@@ -76,7 +76,6 @@ export const orderRepository = {
             code: "INSUFFICIENT_STOCK_QUANTITY",
           });
       }
-      console.log("portfolio encontrado", portfolio);
 
       const nextCash =
         side === "BUY"
@@ -86,8 +85,6 @@ export const orderRepository = {
         side === "BUY"
           ? Number(portfolio.investedValue ?? 0) + cost
           : Number(portfolio.investedValue ?? 0) - cost;
-      console.log("nextCash", nextCash);
-      console.log("nextInvestedValue", nextInvestedValue);
       await tx.portfolio.update({
         where: { id: portfolioId },
         data: {
@@ -95,7 +92,6 @@ export const orderRepository = {
           investedValue: nextInvestedValue,
         },
       });
-      console.log("update de portafolio listo");
 
       // 3) Crear orden
       const order = await tx.order.create({
@@ -110,7 +106,6 @@ export const orderRepository = {
           status: "FILLED",
         },
       });
-      console.log("orden creada");
 
       // Todo: Cambiar avgPrice
       await tx.portfolioPosition.upsert({
@@ -131,7 +126,6 @@ export const orderRepository = {
           lastPrice: price,
         },
       });
-      console.log("portfolio position actualizada");
       await tx.portfolioSnapshot.upsert({
         where: { portfolioId_asOf: { portfolioId, asOf: placedAt } },
         create: {
@@ -146,7 +140,6 @@ export const orderRepository = {
           investedValue: nextInvestedValue,
         },
       });
-      console.log("portfolio snapshot actualizado");
       return order;
     });
   },

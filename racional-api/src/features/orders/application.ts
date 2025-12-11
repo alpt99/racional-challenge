@@ -32,7 +32,6 @@ export const orderApplication = {
         code: "INSUFFICIENT_FUNDS",
       });
     }
-    console.log("payload", payload);
     const order = await orderRepository.createWithEffects(payload);
     return order;
   },
